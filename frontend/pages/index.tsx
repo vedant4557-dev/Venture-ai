@@ -219,3 +219,7 @@ export default function Home() {
     </>
   );
 }
+export const dynamic = 'force-dynamic'
+export async function getServerSideProps() {
+  return { props: {} }
+}
