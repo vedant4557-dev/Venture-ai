@@ -1,11 +1,5 @@
 """
-Risk Detection Engine
-=====================
-AI-powered risk analysis module for startup investment due diligence.
-Detects, categorizes, and scores investment risks from pitch deck text.
-
-NEW module — does not modify existing files.
-Designed to integrate cleanly into the extended analysis pipeline.
+Risk Detection Engine - Gemini Version
 """
 
 import json
@@ -13,88 +7,48 @@ import logging
 import os
 import re
 from dataclasses import dataclass, asdict
-from enum import Enum
-
-import anthropic
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
-
-# ── Risk Taxonomy ──────────────────────────────────────────────────────────────
-
-class RiskCategory(str, Enum):
-    MARKET          = "Market Risk"
-    REGULATORY      = "Regulatory Risk"
-    COMPETITIVE     = "Competitive Risk"
-    TECHNOLOGY      = "Technology Risk"
-    TEAM            = "Team Risk"
-    FINANCIAL       = "Financial Risk"
-    BUSINESS_MODEL  = "Business Model Risk"
-    EXECUTION       = "Execution Risk"
-    CUSTOMER        = "Customer Concentration Risk"
-    MACRO           = "Macro / External Risk"
-
-
-class RiskSeverity(str, Enum):
-    CRITICAL = "CRITICAL"   # Deal-breaker level
-    HIGH     = "HIGH"       # Significant concern, requires mitigation
-    MEDIUM   = "MEDIUM"     # Worth monitoring
-    LOW      = "LOW"        # Minor, typical for stage
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 
 @dataclass
 class RiskItem:
-    """A single identified risk."""
-    category: str           # RiskCategory value
-    title: str              # Short descriptive title
-    description: str        # Detailed explanation of the risk
-    severity: str           # RiskSeverity value
-    evidence: str           # What in the deck triggered this risk flag
+    category: str
+    title: str
+    description: str
+    severity: str
+    evidence: str
     mitigation_possible: bool
-    mitigation_note: str    # How it could be mitigated if possible
+    mitigation_note: str
 
 
 @dataclass
 class RiskReport:
-    """Complete risk assessment for a startup."""
     risks: list[RiskItem]
-
-    # Category-level summaries
     market_risk_summary: str
     regulatory_risk_summary: str
     competitive_risk_summary: str
     team_risk_summary: str
     financial_risk_summary: str
-
-    # Aggregate metrics
     critical_risk_count: int
     high_risk_count: int
     medium_risk_count: int
     low_risk_count: int
-
-    # Scores (0–10, higher = MORE risk)
     market_risk_score: float
     regulatory_risk_score: float
     competitive_risk_score: float
     execution_risk_score: float
-    overall_risk_score: float       # Composite risk score
-
-    # Narrative outputs
-    biggest_risk: str               # The single most important risk
-    risk_verdict: str               # MANAGEABLE / ELEVATED / SEVERE
-    due_diligence_flags: list[str]  # Specific questions to ask before investing
-    deal_breakers: list[str]        # Risks severe enough to kill the deal
+    overall_risk_score: float
+    biggest_risk: str
+    risk_verdict: str
+    due_diligence_flags: list[str]
+    deal_breakers: list[str]
 
 
-# ── Prompts ────────────────────────────────────────────────────────────────────
-
-RISK_SYSTEM_PROMPT = """You are a risk analyst at a top-tier venture capital fund.
-Your specialty is identifying investment risks that other analysts miss.
-You are skeptical but fair. You look for real risks backed by evidence, not generic boilerplate.
-Surface deal-breakers immediately. Be specific. Respond ONLY with valid JSON."""
-
-RISK_ANALYSIS_PROMPT = """Conduct a comprehensive risk analysis of this startup pitch deck.
+RISK_PROMPT = """You are a VC risk analyst. Conduct a comprehensive risk analysis of this startup pitch deck and return ONLY valid JSON.
 
 PITCH DECK TEXT:
 {pitch_deck_text}
@@ -105,19 +59,19 @@ Return ONLY this exact JSON structure:
   "risks": [
     {{
       "category": "Regulatory Risk",
-      "title": "Healthcare data compliance exposure",
-      "description": "The platform handles PHI but no HIPAA compliance framework is mentioned",
-      "severity": "HIGH",
-      "evidence": "References to storing patient records with no mention of compliance",
+      "title": "Short risk title",
+      "description": "Detailed explanation",
+      "severity": "CRITICAL | HIGH | MEDIUM | LOW",
+      "evidence": "What in the deck triggered this",
       "mitigation_possible": true,
-      "mitigation_note": "Can be addressed with BAA agreements and SOC2 certification"
+      "mitigation_note": "How it could be mitigated"
     }}
   ],
-  "market_risk_summary": "...",
-  "regulatory_risk_summary": "...",
-  "competitive_risk_summary": "...",
-  "team_risk_summary": "...",
-  "financial_risk_summary": "...",
+  "market_risk_summary": "Summary of market risks",
+  "regulatory_risk_summary": "Summary of regulatory risks",
+  "competitive_risk_summary": "Summary of competitive risks",
+  "team_risk_summary": "Summary of team risks",
+  "financial_risk_summary": "Summary of financial risks",
   "critical_risk_count": 1,
   "high_risk_count": 2,
   "medium_risk_count": 3,
@@ -127,65 +81,24 @@ Return ONLY this exact JSON structure:
   "competitive_risk_score": 5.0,
   "execution_risk_score": 4.5,
   "overall_risk_score": 5.2,
-  "biggest_risk": "Regulatory exposure without compliance framework is the primary concern",
-  "risk_verdict": "ELEVATED",
-  "due_diligence_flags": [
-    "Request HIPAA compliance roadmap and timeline",
-    "Validate customer concentration — what % of revenue from top 3 customers?"
-  ],
+  "biggest_risk": "The single most important risk",
+  "risk_verdict": "MANAGEABLE | ELEVATED | SEVERE",
+  "due_diligence_flags": ["Question to ask before investing"],
   "deal_breakers": []
 }}
 
-Risk categories to evaluate:
-- Market Risk: TAM assumptions, market timing, demand validation
-- Regulatory Risk: Compliance, licensing, legal exposure
-- Competitive Risk: Defensibility, moat strength, incumbent response
-- Technology Risk: Technical debt, build complexity, IP protection
-- Team Risk: Key person dependency, gaps, culture signals
-- Financial Risk: Burn rate, runway, unit economics
-- Business Model Risk: Monetization viability, pricing power
-- Execution Risk: Ability to deliver on roadmap
-- Customer Concentration Risk: Revenue dependency on few customers
-- Macro Risk: External factors that could derail growth
-
-Severity definitions:
-- CRITICAL: Could kill the company or make investment unviable
-- HIGH: Significant risk requiring active mitigation plan
-- MEDIUM: Normal startup risk, worth monitoring
-- LOW: Minor risk, typical for the stage
-
-Risk score (0-10): 10 = extremely high risk, 0 = minimal risk
-Risk verdict: MANAGEABLE (0-4), ELEVATED (4-7), SEVERE (7-10)"""
+Return ONLY the JSON. No additional text."""
 
 
 async def analyze_risks(pitch_deck_text: str) -> RiskReport:
-    """
-    Perform comprehensive risk analysis on a startup pitch deck.
-
-    Args:
-        pitch_deck_text: Extracted text from the pitch deck PDF.
-
-    Returns:
-        RiskReport with categorized risks, scores, and DD flags.
-    """
     truncated = pitch_deck_text[:80_000]
-
     try:
-        logger.info("Running risk detection analysis...")
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=3000,
-            system=RISK_SYSTEM_PROMPT,
-            messages=[{
-                "role": "user",
-                "content": RISK_ANALYSIS_PROMPT.format(pitch_deck_text=truncated)
-            }]
+        logger.info("Running risk detection with Gemini...")
+        response = model.generate_content(
+            RISK_PROMPT.format(pitch_deck_text=truncated)
         )
-
-        raw = message.content[0].text
-        data = _parse_response(raw)
+        data = _parse_response(response.text)
         return _build_risk_report(data)
-
     except Exception as e:
         logger.error(f"Risk analysis failed: {e}")
         return _fallback_risk_report()
@@ -206,12 +119,11 @@ def _build_risk_report(data: dict) -> RiskReport:
             category=r.get("category", "Unknown Risk"),
             title=r.get("title", "Unnamed Risk"),
             description=r.get("description", ""),
-            severity=r.get("severity", RiskSeverity.MEDIUM),
+            severity=r.get("severity", "MEDIUM"),
             evidence=r.get("evidence", ""),
             mitigation_possible=bool(r.get("mitigation_possible", True)),
             mitigation_note=r.get("mitigation_note", "")
         ))
-
     return RiskReport(
         risks=risks,
         market_risk_summary=data.get("market_risk_summary", ""),
@@ -237,8 +149,7 @@ def _build_risk_report(data: dict) -> RiskReport:
 
 def _fallback_risk_report() -> RiskReport:
     return RiskReport(
-        risks=[],
-        market_risk_summary="Analysis unavailable",
+        risks=[], market_risk_summary="Analysis unavailable",
         regulatory_risk_summary="Analysis unavailable",
         competitive_risk_summary="Analysis unavailable",
         team_risk_summary="Analysis unavailable",
@@ -256,5 +167,4 @@ def _fallback_risk_report() -> RiskReport:
 
 
 def risk_report_to_dict(report: RiskReport) -> dict:
-    """Serialize RiskReport to JSON-safe dict."""
     return asdict(report)

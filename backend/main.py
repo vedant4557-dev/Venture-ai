@@ -32,3 +32,6 @@ app.include_router(analyze_router, prefix="/api", tags=["Analysis"])
 async def health_check():
     """Simple health check endpoint for infrastructure monitoring."""
     return {"status": "ok", "service": "venture-ai-backend"}
+
+from routes.analyze_full import router as analyze_full_router
+app.include_router(analyze_full_router, prefix="/api", tags=["Analysis v2"])
