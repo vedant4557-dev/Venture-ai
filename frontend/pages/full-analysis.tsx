@@ -385,3 +385,7 @@ export default function FullAnalysisPage() {
     </>
   );
 }
+export const dynamic = 'force-dynamic'
+export async function getServerSideProps() {
+  return { props: {} }
+}
